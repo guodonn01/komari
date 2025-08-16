@@ -84,7 +84,7 @@ func OfflineNotification(clientID string) {
 	state.mu.Unlock()
 
 	// 新建协程，等待宽限期后判断是否需要发送通知。
-	go func(startTime time.Time) {
+	go func(startTime time.Time, expectedConnectionID uint64) {
 		time.Sleep(gracePeriod)
 
 		state.mu.Lock()
@@ -92,7 +92,8 @@ func OfflineNotification(clientID string) {
 
 		// 检查离线状态是否仍为本次协程启动时的状态。
 		// 若为零值，说明客户端已重连。
-		// 若时间不同，说明客户端重连后又断开，已启动新计时。
+		// 若时间不同，说明客户端重连后又断开，已启动新计时。 --由于存在并发，时间不能作为标准
+		// 当前的 connectionID 是否还是我们触发离线时的那个ID。如果不是，说明客户端重连过，本次离线通知已失效。
 		if state.pendingOfflineSince.IsZero() || state.connectionID != expectedConnectionID {
 			return
 		}
@@ -113,7 +114,7 @@ func OfflineNotification(clientID string) {
 		if err := db.Model(&models.OfflineNotification{}).Where("client = ?", clientID).Update("last_notified", now).Error; err != nil {
 			log.Printf("Failed to update last_notified for client %s: %v", clientID, err)
 		}
-	}(now)
+	}(now, currentConnectionID)
 }
 
 // OnlineNotification 在启用通知的情况下，发送客户端上线通知。
