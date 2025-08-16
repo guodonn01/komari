@@ -22,6 +22,11 @@ import (
 	"github.com/patrickmn/go-cache"
 )
 
+const (
+	// 如果超过这个时间没有收到任何消息，则认为连接已死
+	readWait = 30 * time.Second
+)
+
 func UploadReport(c *gin.Context) {
 	bodyBytes, err := io.ReadAll(c.Request.Body)
 	if err != nil {
@@ -120,70 +125,83 @@ func WebSocketReport(c *gin.Context) {
 		log.Printf("Client %s is reconnecting. Closing the old connection.", uuid)
 
 		// 强制关闭旧连接。这将导致旧连接的 ReadMessage() 循环出错退出。
-		oldConn.Close()
+		go oldConn.Close()
 	}
 	ws.SetConnectedClients(uuid, conn)
+	log.Printf("Client %s is reconnect success", uuid)
 	go notifier.OnlineNotification(uuid)
 	defer func() {
-		log.Println("ws report close ws conn")
 		ws.DeleteClientConditionally(uuid, conn)
 		notifier.OfflineNotification(uuid)
+		log.Println("ws report close ws conn")
 	}()
 
+	// 首先处理第一次ws conn收到的消息
+	processMessage(conn, message, uuid)
+
 	for {
+		conn.SetReadDeadline(time.Now().Add(readWait))
+
 		_, message, err := conn.ReadMessage()
 		if err != nil {
-			break
+			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
+				log.Printf("Client %s connection error: %v", uuid, err)
+			}
+			break // 任何读错误（包括超时）都意味着连接已断开，退出循环
 		}
+		processMessage(conn, message, uuid)
+	}
+}
 
-		type MessageType struct {
-			Type string `json:"type"`
-		}
-		var msgType MessageType
-		err = json.Unmarshal(message, &msgType)
+// 将消息处理逻辑提取到一个函数中，方便复用
+func processMessage(conn *ws.SafeConn, message []byte, uuid string) {
+	type MessageType struct {
+		Type string `json:"type"`
+	}
+	var msgType MessageType
+	err := json.Unmarshal(message, &msgType)
+	if err != nil {
+		conn.WriteJSON(gin.H{"status": "error", "error": "Invalid JSON"})
+		return
+	}
+
+	switch msgType.Type {
+	case "", "report":
+		report := common.Report{}
+		err = json.Unmarshal(message, &report)
 		if err != nil {
-			conn.WriteJSON(gin.H{"status": "error", "error": "Invalid JSON"})
-			continue
+			conn.WriteJSON(gin.H{"status": "error", "error": "Invalid report format"})
+			return
 		}
-		switch msgType.Type {
-		case "", "report":
-			report := common.Report{}
-			err = json.Unmarshal(message, &report)
-			if err != nil {
-				conn.WriteJSON(gin.H{"status": "error", "error": "Invalid report format"})
-				continue
-			}
-			report.UpdatedAt = time.Now()
-			err = SaveClientReport(uuid, report)
-			if err != nil {
-				conn.WriteJSON(gin.H{"status": "error", "error": fmt.Sprintf("%v", err)})
-				continue
-			}
-			ws.SetLatestReport(uuid, &report)
-		case "ping_result":
-			var reqBody struct {
-				PingTaskID uint      `json:"task_id"`
-				PingResult int       `json:"value"`
-				PingType   string    `json:"ping_type"`
-				FinishedAt time.Time `json:"finished_at"`
-			}
-			err = json.Unmarshal(message, &reqBody)
-			if err != nil {
-				conn.WriteJSON(gin.H{"status": "error", "error": "Invalid ping result format"})
-				continue
-			}
-			pingResult := models.PingRecord{
-				Client: uuid,
-				TaskId: reqBody.PingTaskID,
-				Value:  reqBody.PingResult,
-				Time:   models.FromTime(reqBody.FinishedAt),
-			}
-			tasks.SavePingRecord(pingResult)
-		default:
-			log.Printf("Unknown message type: %s", msgType.Type)
-			conn.WriteJSON(gin.H{"status": "error", "error": "Unknown message type"})
+		report.UpdatedAt = time.Now()
+		err = SaveClientReport(uuid, report)
+		if err != nil {
+			conn.WriteJSON(gin.H{"status": "error", "error": fmt.Sprintf("%v", err)})
+			return
 		}
-
+		ws.SetLatestReport(uuid, &report)
+	case "ping_result":
+		var reqBody struct {
+			PingTaskID uint      `json:"task_id"`
+			PingResult int       `json:"value"`
+			PingType   string    `json:"ping_type"`
+			FinishedAt time.Time `json:"finished_at"`
+		}
+		err = json.Unmarshal(message, &reqBody)
+		if err != nil {
+			conn.WriteJSON(gin.H{"status": "error", "error": "Invalid ping result format"})
+			return
+		}
+		pingResult := models.PingRecord{
+			Client: uuid,
+			TaskId: reqBody.PingTaskID,
+			Value:  reqBody.PingResult,
+			Time:   models.FromTime(reqBody.FinishedAt),
+		}
+		tasks.SavePingRecord(pingResult)
+	default:
+		log.Printf("Unknown message type: %s", msgType.Type)
+		conn.WriteJSON(gin.H{"status": "error", "error": "Unknown message type"})
 	}
 }
 

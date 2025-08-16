@@ -20,6 +20,7 @@ type notificationState struct {
 	mu                  sync.Mutex // 互斥锁，保护该客户端状态
 	pendingOfflineSince time.Time  // 客户端离线的时间。为零值表示客户端在线或已发送离线通知。
 	isFirstConnection   bool       // 标记是否为首次上线连接。
+	connectionID        uint64     // 连接ID，用于区分不同的连接会话，防止竞态条件
 }
 
 // clientStates 使用 sync.Map 实现对客户端状态的并发访问。
@@ -79,6 +80,7 @@ func OfflineNotification(clientID string) {
 	}
 	// 标记该客户端为待离线。
 	state.pendingOfflineSince = now
+	currentConnectionID := state.connectionID
 	state.mu.Unlock()
 
 	// 新建协程，等待宽限期后判断是否需要发送通知。
@@ -91,7 +93,7 @@ func OfflineNotification(clientID string) {
 		// 检查离线状态是否仍为本次协程启动时的状态。
 		// 若为零值，说明客户端已重连。
 		// 若时间不同，说明客户端重连后又断开，已启动新计时。
-		if state.pendingOfflineSince.IsZero() || !state.pendingOfflineSince.Equal(startTime) {
+		if state.pendingOfflineSince.IsZero() || || state.connectionID != expectedConnectionID {
 			return
 		}
 
@@ -131,6 +133,7 @@ func OnlineNotification(clientID string) {
 
 	state.mu.Lock()
 	defer state.mu.Unlock()
+    state.connectionID++
 
 	// 规则1：首次连接不通知。
 	if state.isFirstConnection {
