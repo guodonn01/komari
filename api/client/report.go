@@ -33,6 +33,7 @@ func UploadReport(c *gin.Context) {
 	var data map[string]interface{}
 	err = json.Unmarshal(bodyBytes, &data)
 	if err != nil {
+		log.Println("read request body format err:", err)
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
 		return
 	}
@@ -40,6 +41,7 @@ func UploadReport(c *gin.Context) {
 	var report common.Report
 	err = json.Unmarshal(bodyBytes, &report)
 	if err != nil {
+		log.Println("save to db err:", err)
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
 		return
 	}
@@ -71,6 +73,7 @@ func WebSocketReport(c *gin.Context) {
 	// Upgrade the HTTP connection to a WebSocket connection
 	unsafeConn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
+		log.Println("upgrade ws fail:", err)
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "Failed to upgrade to WebSocket"})
 		return
 	}
@@ -87,6 +90,7 @@ func WebSocketReport(c *gin.Context) {
 	data := map[string]interface{}{}
 	err = json.Unmarshal(message, &data)
 	if err != nil {
+		log.Println("ws report format err:", err)
 		conn.WriteJSON(gin.H{"status": "error", "error": "Invalid JSON"})
 		return
 	}
@@ -99,12 +103,14 @@ func WebSocketReport(c *gin.Context) {
 
 	// 如果 token 为空，返回错误
 	if token == "" {
+		log.Println("ws report token is nul")
 		conn.WriteJSON(gin.H{"status": "error", "error": errMsg})
 		return
 	}
 
 	uuid, err := clients.GetClientUUIDByToken(token)
 	if err != nil {
+		log.Println("ws report token can't find uuid")
 		conn.WriteJSON(gin.H{"status": "error", "error": errMsg})
 		return
 	}
@@ -119,6 +125,7 @@ func WebSocketReport(c *gin.Context) {
 	ws.SetConnectedClients(uuid, conn)
 	go notifier.OnlineNotification(uuid)
 	defer func() {
+		log.Println("ws report close ws conn")
 		ws.DeleteClientConditionally(uuid, conn)
 		notifier.OfflineNotification(uuid)
 	}()
