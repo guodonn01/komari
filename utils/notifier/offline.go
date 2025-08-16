@@ -93,7 +93,7 @@ func OfflineNotification(clientID string) {
 		// 检查离线状态是否仍为本次协程启动时的状态。
 		// 若为零值，说明客户端已重连。
 		// 若时间不同，说明客户端重连后又断开，已启动新计时。
-		if state.pendingOfflineSince.IsZero() || || state.connectionID != expectedConnectionID {
+		if state.pendingOfflineSince.IsZero() || state.connectionID != expectedConnectionID {
 			return
 		}
 
@@ -133,7 +133,7 @@ func OnlineNotification(clientID string) {
 
 	state.mu.Lock()
 	defer state.mu.Unlock()
-    state.connectionID++
+	state.connectionID++
 
 	// 规则1：首次连接不通知。
 	if state.isFirstConnection {
