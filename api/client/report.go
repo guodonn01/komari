@@ -51,7 +51,7 @@ func UploadReport(c *gin.Context) {
 	}
 	// Update report with method and token
 
-	ws.GetLatestReport()[report.UUID] = &report
+	ws.SetLatestReport(report.UUID, &report)
 
 	c.Request.Body = io.NopCloser(bytes.NewBuffer(bodyBytes)) // Restore the body for further use
 	c.JSON(200, gin.H{"status": "success"})
@@ -109,15 +109,17 @@ func WebSocketReport(c *gin.Context) {
 		return
 	}
 
-	// 只允许一个客户端的连接
-	if _, exists := ws.GetConnectedClients()[uuid]; exists {
-		conn.WriteJSON(gin.H{"status": "error", "error": "Token already in use"})
-		return
+	// 接受新连接，并处理旧连接
+	if oldConn, exists := ws.GetConnectedClients()[uuid]; exists {
+		log.Printf("Client %s is reconnecting. Closing the old connection.", uuid)
+
+		// 强制关闭旧连接。这将导致旧连接的 ReadMessage() 循环出错退出。
+		oldConn.Close()
 	}
 	ws.SetConnectedClients(uuid, conn)
 	go notifier.OnlineNotification(uuid)
 	defer func() {
-		ws.DeleteConnectedClients(uuid)
+		ws.DeleteClientConditionally(uuid, conn)
 		notifier.OfflineNotification(uuid)
 	}()
 
