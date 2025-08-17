@@ -24,7 +24,7 @@ import (
 
 const (
 	// 如果超过这个时间没有收到任何消息，则认为连接已死
-	readWait = 30 * time.Second
+	readWait = 11 * time.Second
 )
 
 func UploadReport(c *gin.Context) {
@@ -128,12 +128,12 @@ func WebSocketReport(c *gin.Context) {
 		go oldConn.Close()
 	}
 	ws.SetConnectedClients(uuid, conn)
-	log.Printf("Client %s is reconnect success", uuid)
-	go notifier.OnlineNotification(uuid)
+	log.Printf("Client %s is reconnect success, connID: %d", uuid, conn.ID)
+	go notifier.OnlineNotification(uuid, conn.ID)
 	defer func() {
 		ws.DeleteClientConditionally(uuid, conn)
-		notifier.OfflineNotification(uuid)
-		log.Println("ws report close ws conn")
+		notifier.OfflineNotification(uuid, conn.ID)
+		log.Println("%s ws report close ws conn %d", uuid, conn.ID)
 	}()
 
 	// 首先处理第一次ws conn收到的消息
